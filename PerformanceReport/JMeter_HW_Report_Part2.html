@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<title>Звіт з навантажувального тестування JMeter — Частина 2</title>
+<style>
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 0 20px;
+    line-height: 1.6;
+    color: #222;
+    background: #fdfdfd;
+  }
+  h1 { border-bottom: 3px solid #2b6cb0; padding-bottom: 10px; color: #1a365d; }
+  h2 { border-bottom: 1px solid #ccc; padding-bottom: 6px; margin-top: 40px; color: #2c5282; }
+  h3 { color: #2c5282; margin-top: 25px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 15px 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid #ccc;
+    padding: 8px 10px;
+    text-align: left;
+  }
+  th { background: #2b6cb0; color: white; }
+  tr:nth-child(even) { background: #f2f6fa; }
+  .highlight { background: #fff3cd !important; font-weight: bold; }
+  code {
+    background: #eef1f4;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: Consolas, monospace;
+  }
+  pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 12px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+  }
+  .meta {
+    background: #f2f6fa;
+    padding: 15px 20px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+  }
+  .meta p { margin: 4px 0; }
+  .conclusion {
+    background: #e6fffa;
+    border-left: 4px solid #38a169;
+    padding: 15px 20px;
+    border-radius: 4px;
+  }
+  .warning {
+    background: #fff5f5;
+    border-left: 4px solid #e53e3e;
+    padding: 12px 18px;
+    border-radius: 4px;
+    margin: 15px 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>Звіт з навантажувального тестування JMeter — Частина 2</h1>
+
+<div class="meta">
+  <p><strong>Курс:</strong> QA Pro, Hillel</p>
+  <p><strong>Тестувальник:</strong> Юлія Моспак</p>
+  <p><strong>Дата:</strong> 13.08.2026</p>
+  <p><strong>Тестований додаток:</strong> QA Pro REST App (Docker-образ <code>oleksandrgolubishko/qa_pro_rest_app</code>, <code>http://localhost:3001</code>)</p>
+</div>
+
+<h2>1. Мета роботи</h2>
+<p>Навчитись використовувати JMeter для тестування продуктивності REST API, налаштувати кореляцію динамічних даних, зібрати та проаналізувати метрики продуктивності й ресурсів системи, а також запропонувати стратегії оптимізації.</p>
+
+<h2>2. Налаштування середовища</h2>
+<ul>
+  <li>Запущено Docker-контейнер з тестованим додатком:
+    <pre>docker run -p 3001:3001 oleksandrgolubishko/qa_pro_rest_app</pre>
+  </li>
+  <li>Додаток підтверджено доступним за адресою <code>http://localhost:3001</code>.</li>
+  <li>Тестовий інструмент: Apache JMeter 5.6.3, запуск виключно в CLI-режимі (<code>-n</code>, non-GUI) — офіційно рекомендований спосіб запуску реальних тестів, оскільки GUI-режим призначений тільки для розробки та налагодження тест-плану і споживає зайві ресурси на відмальовування графіки в реальному часі.</li>
+</ul>
+
+<h2>3. Структура тест-плану</h2>
+<p>Тест-план (<code>test1(performance).jmx</code>) містить повний CRUD-цикл роботи з сутністю "character":</p>
+<table>
+<tr><th>№</th><th>Запит</th><th>Метод</th><th>Опис</th></tr>
+<tr><td>1</td><td>GET all characters</td><td>GET</td><td>Отримати список усіх персонажів</td></tr>
+<tr><td>2</td><td>POST create character</td><td>POST</td><td>Створити нового персонажа</td></tr>
+<tr><td>3</td><td>GET character by id</td><td>GET</td><td>Отримати створеного персонажа за ID</td></tr>
+<tr><td>4</td><td>PUT update character</td><td>PUT</td><td>Оновити дані персонажа</td></tr>
+<tr><td>5</td><td>DELETE character</td><td>DELETE</td><td>Видалити персонажа</td></tr>
+</table>
+
+<p><strong>Додаткові елементи:</strong></p>
+<ul>
+  <li><strong>HTTP Header Manager</strong> — задає загальні заголовки для всіх запитів.</li>
+  <li><strong>Constant Timer</strong> (1000 мс) — штучна пауза між ітераціями, додана для того, щоб тест тривав достатньо довго для коректного моніторингу ресурсів (див. розділ 5).</li>
+  <li><strong>Thread Group:</strong> 1 користувач (Number of Threads = 1), 30 повторів (Loop Count = 30) — послідовне навантаження без паралелізму, щоб чітко бачити поведінку кожного окремого циклу запитів.</li>
+</ul>
+
+<h2>4. Кореляція та динамічні дані</h2>
+<p>Оскільки <code>id</code> персонажа генерується сервером динамічно під час виконання <code>POST create character</code>, для коректної роботи наступних запитів (<code>GET by id</code>, <code>PUT</code>, <code>DELETE</code>) використано техніку <strong>кореляції</strong>:</p>
+<ul>
+  <li>Додано <strong>JSON Extractor</strong> на запит <code>POST create character</code>:
+    <ul>
+      <li>Variable name: <code>characterId</code></li>
+      <li>JSON Path: <code>$.id</code></li>
+      <li>Default Value: <code>NOT_FOUND</code> (для діагностики у разі помилки вилучення)</li>
+    </ul>
+  </li>
+  <li>URL-адреси наступних запитів оновлено на <code>${baseUrl}/character/${characterId}</code>.</li>
+</ul>
+<p><strong>Перевірка кореляції:</strong> проведено окремий CLI-прогін з аналізом <code>.jtl</code>-файлу результатів. У логах підтверджено, що всі запити (<code>GET by id</code>, <code>PUT</code>, <code>DELETE</code>) використовували один і той самий реальний ID (наприклад, <code>character/4</code>), отриманий з відповіді <code>POST</code>, а не значення <code>NOT_FOUND</code>. Усі відповіді мали статус <code>200 OK</code> / <code>201 Created</code>, що підтверджує коректність ланцюжка запитів.</p>
+
+<h2>5. Listeners та моніторинг ресурсів</h2>
+
+<h3>5.1 Listeners для метрик продуктивності</h3>
+<p>У тест-плані використано:</p>
+<ul>
+  <li><strong>View Results Tree</strong> — перегляд деталей кожного окремого запиту/відповіді.</li>
+  <li><strong>Aggregate Report</strong> — зведена статистика (середній/мінімальний/максимальний час відповіді, перцентилі, throughput, % помилок).</li>
+  <li><strong>Graph Results</strong> — візуальний графік часу відповіді, throughput та відхилення в реальному часі.</li>
+</ul>
+
+<h3>5.2 Моніторинг ресурсів (CPU/RAM)</h3>
+<p>Спочатку планувалось використати плагін <strong>PerfMon (jp@gc - PerfMon Metrics Collector)</strong> через <code>ServerAgent</code>. Плагін було успішно встановлено через JMeter Plugins Manager, ServerAgent запускався і навіть встановлював TCP-з'єднання з JMeter (<code>Accepting new TCP connection</code>, <code>Starting measures: memory: cpu:</code>), проте аварійно завершувався (<code>EXCEPTION_ACCESS_VIOLATION</code>) через конфлікт застарілої бібліотеки <code>sigar</code> (2017 р.) з сучасною версією Java Runtime Environment, встановленою в системі.</p>
+
+<div class="warning">
+<strong>Прийняте рішення:</strong> оскільки завдання прямо допускає використання "PerfMon або іншого відповідного Listener", моніторинг ресурсів здійснено через вбудований <strong>Диспетчер завдань Windows</strong> (вкладка "Продуктивність" → CPU / Пам'ять), синхронно зі запуском навантажувального тесту через CLI.
+</div>
+
+<p><strong>Результати спостереження під час прогону</strong> (30 циклів × 5 запитів, ~2,5 хв):</p>
+<table>
+<tr><th>Показник</th><th>До тесту (baseline)</th><th>Під час тесту</th></tr>
+<tr><td>CPU</td><td>~6%</td><td>5–10%, з періодичними сплесками до ~10-11%, що відповідають моментам обробки запитів Docker-контейнером</td></tr>
+<tr><td>RAM</td><td>10,7 / 15,4 ГБ (69%)</td><td>11,0–11,3 / 15,4 ГБ (71–73%)</td></tr>
+</table>
+<p>Зафіксовано серію скріншотів графіків CPU та Memory до, під час і після прогону тесту — додано до git-гілки як докази моніторингу. Результати цього прогону збережено у файлі <code>performamce_monitoring.jtl</code>.</p>
+
+<h2>6. Аналіз результатів (Aggregate Report)</h2>
+<p>Дані отримано з фінального прогону (<code>performamce_monitoring.jtl</code>, 150 семплів):</p>
+<table>
+<tr>
+  <th>Запит</th><th>Samples</th><th>Average</th><th>Median</th><th>90%</th><th>95%</th><th>99%</th><th>Min</th><th>Max</th><th>Error %</th><th>Throughput</th>
+</tr>
+<tr><td>GET all characters</td><td>30</td><td>3 мс</td><td>2 мс</td><td>3 мс</td><td>4 мс</td><td class="highlight">25 мс</td><td>2 мс</td><td class="highlight">25 мс</td><td>0.00%</td><td>12.4/min</td></tr>
+<tr><td>POST create character</td><td>30</td><td>2 мс</td><td>3 мс</td><td>3 мс</td><td>3 мс</td><td>5 мс</td><td>2 мс</td><td>5 мс</td><td>0.00%</td><td>12.4/min</td></tr>
+<tr><td>GET character by id</td><td>30</td><td>2 мс</td><td>3 мс</td><td>3 мс</td><td>3 мс</td><td>3 мс</td><td>2 мс</td><td>3 мс</td><td>0.00%</td><td>12.4/min</td></tr>
+<tr><td>PUT update character</td><td>30</td><td>2 мс</td><td>3 мс</td><td>3 мс</td><td>3 мс</td><td>4 мс</td><td>2 мс</td><td>4 мс</td><td>0.00%</td><td>12.4/min</td></tr>
+<tr><td>DELETE character</td><td>30</td><td>2 мс</td><td>3 мс</td><td>3 мс</td><td>4 мс</td><td>5 мс</td><td>2 мс</td><td>5 мс</td><td>0.00%</td><td>12.4/min</td></tr>
+<tr style="font-weight:bold; background:#dbe8f5;"><td>TOTAL</td><td>150</td><td>2 мс</td><td>3 мс</td><td>3 мс</td><td>4 мс</td><td>5 мс</td><td>2 мс</td><td>25 мс</td><td>0.00%</td><td>1.0/sec</td></tr>
+</table>
+
+<h3>Виявлене вузьке місце</h3>
+<p>Запит <strong>GET all characters</strong> демонструє суттєвий викид: максимальний час відповіді (25 мс) і 99-й перцентиль (25 мс) значно перевищують показники решти запитів (3–5 мс), тоді як медіана (2 мс) залишається низькою. Це вказує на <strong>одноразову аномалію в одному з 30 виконань</strong>, а не на системну проблему.</p>
+<p><strong>Ймовірна причина:</strong> запит повертає повний список персонажів, розмір якого динамічно змінювався протягом тесту (кожен цикл додавав і видаляв по одному персонажу). Найімовірніше, пік стався в момент, коли база даних або мережеве з'єднання ще не було "прогріте" (перший виклик у циклі), або в момент паралельної операції запису.</p>
+
+<h3>Показники стабільності</h3>
+<ul>
+  <li><strong>Error rate: 0.00%</strong> по всіх типах запитів — сервер жодного разу не повернув помилку.</li>
+  <li>Кореляція (<code>characterId</code>) відпрацювала коректно у всіх 30 ітераціях без винятків.</li>
+</ul>
+
+<h2>6.1 Стрес-тестування з паралельними потоками</h2>
+<p>Додатково до основного сценарію (1 послідовний користувач) проведено стрес-тест з конкурентним навантаженням (окремий тест-план <code>test2(stress).jmx</code> — копія основного плану зі зміненими параметрами Thread Group):</p>
+<ul>
+  <li><strong>Number of Threads (users):</strong> 20 (паралельні віртуальні користувачі)</li>
+  <li><strong>Ramp-up period:</strong> 5 секунд</li>
+  <li><strong>Loop Count:</strong> 5 (кожен користувач)</li>
+  <li><strong>Constant Timer:</strong> 0 мс (без штучних пауз — максимальне навантаження)</li>
+  <li><strong>Загальна кількість запитів:</strong> 20 × 5 × 5 = 500</li>
+</ul>
+
+<table>
+<tr><th>Сценарій</th><th>Users</th><th>Запитів</th><th>Тривалість</th><th>Throughput</th><th>Max час відповіді</th><th>Errors</th></tr>
+<tr><td>Послідовний (baseline)</td><td>1</td><td>150</td><td>2 хв 31 сек</td><td>1.0/сек</td><td>25 мс</td><td>0.00%</td></tr>
+<tr class="highlight"><td>Стрес-тест (паралельний)</td><td>20</td><td>500</td><td>5 сек</td><td>104.2/сек</td><td>24 мс</td><td>0.00%</td></tr>
+</table>
+
+<div class="conclusion">
+<p><strong>Висновок стрес-тесту:</strong> навіть під навантаженням у <strong>104 запити/секунду</strong> (майже у 100 разів вище за базовий сценарій), додаток утримав <strong>0% помилок</strong>, а максимальний час відповіді (24 мс) залишився на тому ж рівні, що й при значно меншому навантаженні. Це свідчить про хорошу здатність REST API обробляти конкурентні запити без деградації стабільності в межах протестованого діапазону навантаження.</p>
+</div>
+
+<p>Під час стрес-тесту зафіксовано моніторинг ресурсів через Диспетчер завдань: спостерігались більш виражені та часті піки CPU (порівняно з послідовним сценарієм), що логічно відповідає значно вищій інтенсивності запитів за одиницю часу. Результати цього прогону збережено у файлі <code>stress_minitoring.jtl</code>.</p>
+
+<h2>7. Стратегії оптимізації</h2>
+<ol>
+  <li><strong>Пагінація для GET all characters</strong> — повертати список частинами (наприклад, по 20-50 записів), а не повністю, щоб уникнути зростання часу відповіді при збільшенні кількості даних.</li>
+  <li><strong>Індексація бази даних</strong> — додати індекси для пришвидшення операцій вибірки, особливо для GET all.</li>
+  <li><strong>Кешування</strong> — якщо список персонажів не змінюється надто часто, розглянути кешування відповіді GET all characters на короткий проміжок часу.</li>
+  <li><strong>Розширене навантажувальне тестування</strong> — провести додаткові прогони з більшою кількістю паралельних потоків (Number of Threads &gt; 1) та без штучних пауз (Constant Timer), щоб перевірити, чи виявлений пік у 25 мс є систематичною проблемою під реальним конкурентним навантаженням, чи одноразовою аномалією.</li>
+  <li><strong>Стрес-тестування</strong> — поступово збільшувати кількість користувачів (наприклад, 10 → 50 → 100) для визначення точки, після якої час відповіді або error rate починають суттєво зростати.</li>
+</ol>
+
+<h2>8. Висновки</h2>
+<div class="conclusion">
+<p>REST API тестованого додатку демонструє високу стабільність (0% помилок) і низький середній час відповіді (2-3 мс) під поточним рівнем навантаження. Технічна кореляція динамічних ID реалізована та підтверджена коректно. Виявлено одне потенційне вузьке місце в запиті отримання повного списку сутностей, для якого запропоновано конкретні шляхи оптимізації. Моніторинг ресурсів системи (CPU/RAM) показав помірне навантаження без ознак виснаження ресурсів під час тесту.</p>
+</div>
+
+<h2>Додатки</h2>
+<ul>
+  <li>Файли результатів: <code>performamce_monitoring.jtl</code>, <code>stress_minitoring.jtl</code></li>
+  <li>Тест-плани: <code>test1(performance).jmx</code>, <code>test2(stress).jmx</code></li>
+  <li>HTML-звіти попередніх прогонів (частина 1 домашнього завдання)</li>
+</ul>
+
+</body>
+</html>
